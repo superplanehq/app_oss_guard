@@ -13,7 +13,8 @@ Built with [SuperPlane](https://superplane.com).
 3. **Run license check** — clone the PR head, detect the project license from `LICENSE`, `package.json`, or `pyproject.toml`, then run `license_finder` against dependencies
 4. **Record stats** — save per-license counts and the latest scan summary to the `ossGuardLicenseStats` and `ossGuardScanSummary` memory namespaces
 5. **Enforce** — publish an **OSS Guard** commit status (success or failure) and comment on the PR when dependencies use unapproved licenses
-6. **Console** — totals, a license breakdown chart, scan history, and panels to add or remove additional permitted dependency licenses
+6. **Setup** — run with a `repository` parameter (`owner/repo`) to scan the `main` branch and initialize console statistics
+7. **Console** — totals, a license breakdown chart, scan history, and panels to add or remove additional permitted dependency licenses
 
 ## Prerequisites
 
@@ -25,11 +26,12 @@ Built with [SuperPlane](https://superplane.com).
 
 1. **Add a LICENSE file** (or set `license` in `package.json` / `pyproject.toml`) in your repository — OSS Guard reads the project license from source code.
 2. **Connect GitHub** — bind a GitHub integration on the canvas nodes, then select the repository on **On Pull Request**.
-3. **Optional:** add extra permitted dependency licenses in the console, or add a `GITHUB_TOKEN` secret on **Run license check** for private repositories.
+3. **Run Setup** — enter the repository as `owner/repo` (for example, `superplanehq/superplane`) to scan the `main` branch and populate the console.
+4. **Optional:** add extra permitted dependency licenses in the console, or add a `GITHUB_TOKEN` secret on **Run license check** for private repositories.
 
 ## `GITHUB_TOKEN` secret
 
-Add a secret named `GITHUB_TOKEN` on the **Run license check** node. It is used to clone private repositories at the PR head SHA.
+Add a secret named `GITHUB_TOKEN` on the **Run license check** node. It is used to clone private repositories during Setup and PR checks.
 
 - **Private repositories:** required
 - **Public repositories:** optional

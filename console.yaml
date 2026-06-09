@@ -6,6 +6,12 @@ metadata:
   name: app-oss-guard
 spec:
   panels:
+  - id: setup-panel
+    type: node
+    content:
+      node: Setup
+      showRun: true
+      title: Setup
   - id: readme
     type: markdown
     content:
@@ -13,18 +19,19 @@ spec:
         OSS Guard runs [license_finder](https://github.com/pivotal/LicenseFinder) on every pull request and checks that dependencies are compatible with your project's license.
 
         <details open>
-        <summary>Quick start</summary>
+        <summary>Getting started</summary>
 
-        1. **Add a LICENSE file** (or set `license` in `package.json` / `pyproject.toml`) in your repository — OSS Guard reads the project license from source code.
-        2. **Connect GitHub** — bind a GitHub integration on the canvas nodes, then select the repository on **On Pull Request**.
-        3. **Optional:** add extra permitted dependency licenses below, or a `GITHUB_TOKEN` secret on **Run license check** for private repositories.
+        1. Add a `LICENSE` file (or set `license` in `package.json` / `pyproject.toml`) in your repository.
+        2. Connect GitHub on the canvas nodes and select the repository on **On Pull Request**.
+        3. Run **Setup** above with `owner/repo` to scan `main` and populate the dashboard.
+        4. Optionally add a `GITHUB_TOKEN` secret on **Run license check** for private repositories.
 
         </details>
 
         <details>
-        <summary>License statistics</summary>
+        <summary>Approving extra licenses</summary>
 
-        After each PR check, dependency license statistics are saved here — total dependencies, unique licenses, a breakdown chart, and the latest scan summary. Stats refresh when a pull request triggers a new check.
+        Use **Add permitted license** to allow additional dependency licenses beyond the defaults for your project license. You can also add exceptions in your repository's `config/dependency_decisions.yml`.
 
         </details>
       title: OSS Guard
@@ -177,66 +184,73 @@ spec:
       showRun: true
       title: Add permitted license
   layout:
-  - i: readme
+  - i: setup-panel
     x: 0
     "y": 0
     w: 4
-    h: 8
+    h: 3
+    minW: 2
+    minH: 2
+  - i: readme
+    x: 0
+    "y": 3
+    w: 4
+    h: 6
     minW: 2
     minH: 2
   - i: kpi-total-dependencies
-    x: 4
-    "y": 0
-    w: 2
-    h: 4
+    x: 0
+    "y": 9
+    w: 4
+    h: 2
     minW: 2
     minH: 2
   - i: kpi-unique-licenses
-    x: 6
-    "y": 0
-    w: 2
-    h: 4
+    x: 0
+    "y": 11
+    w: 4
+    h: 2
     minW: 2
     minH: 2
   - i: kpi-unapproved
-    x: 8
-    "y": 0
-    w: 2
-    h: 4
+    x: 0
+    "y": 13
+    w: 4
+    h: 2
+    minW: 2
+    minH: 2
+  - i: add-license-panel
+    x: 0
+    "y": 15
+    w: 4
+    h: 3
     minW: 2
     minH: 2
   - i: chart-licenses
     x: 4
-    "y": 4
-    w: 6
-    h: 4
+    "y": 0
+    w: 8
+    h: 18
     minW: 4
     minH: 3
   - i: license-stats-table
     x: 0
-    "y": 8
+    "y": 18
     w: 7
     h: 7
     minW: 4
     minH: 4
   - i: scan-summary-table
     x: 7
-    "y": 8
+    "y": 18
     w: 5
     h: 7
     minW: 4
     minH: 4
   - i: licenses-table
     x: 0
-    "y": 15
-    w: 9
+    "y": 25
+    w: 12
     h: 5
     minW: 4
     minH: 3
-  - i: add-license-panel
-    x: 9
-    "y": 15
-    w: 3
-    h: 3
-    minW: 2
-    minH: 2

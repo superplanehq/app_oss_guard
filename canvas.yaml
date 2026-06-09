@@ -189,9 +189,20 @@ spec:
             return approved
 
         def main(payload):
+            setup = (payload.get("Setup") or {}).get("data") or {}
             event = (payload.get("On Pull Request") or {}).get("data") or {}
-            repo = (event.get("repository") or {}).get("full_name", "")
-            sha = ((event.get("pull_request") or {}).get("head") or {}).get("sha", "")
+
+            if setup.get("repository"):
+                repo = str(setup["repository"]).strip()
+                branch = str(setup.get("branch") or "main").strip() or "main"
+                checkout_mode = "branch"
+                checkout_ref = branch
+                last_pr_number = ""
+            else:
+                repo = (event.get("repository") or {}).get("full_name", "")
+                checkout_mode = "sha"
+                checkout_ref = ((event.get("pull_request") or {}).get("head") or {}).get("sha", "")
+                last_pr_number = str((event.get("pull_request") or {}).get("number") or "")
 
             extra = []
             seen = set()
@@ -215,26 +226,47 @@ spec:
                     clone_url = "https://x-access-token:{0}@github.com/{1}.git".format(token, repo)
 
                 repo_dir = os.path.join(workdir, "repo")
-                subprocess.run(
-                    ["git", "clone", "--depth", "1", clone_url, repo_dir],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-                subprocess.run(
-                    ["git", "fetch", "--depth", "1", "origin", sha],
-                    cwd=repo_dir,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-                subprocess.run(
-                    ["git", "checkout", sha],
-                    cwd=repo_dir,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
+                if checkout_mode == "branch":
+                    clone_result = subprocess.run(
+                        ["git", "clone", "--depth", "1", "--branch", checkout_ref, clone_url, repo_dir],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if clone_result.returncode != 0:
+                        subprocess.run(
+                            ["git", "clone", "--depth", "1", clone_url, repo_dir],
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                        )
+                        subprocess.run(
+                            ["git", "checkout", checkout_ref],
+                            cwd=repo_dir,
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                        )
+                else:
+                    subprocess.run(
+                        ["git", "clone", "--depth", "1", clone_url, repo_dir],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                    subprocess.run(
+                        ["git", "fetch", "--depth", "1", "origin", checkout_ref],
+                        cwd=repo_dir,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                    subprocess.run(
+                        ["git", "checkout", checkout_ref],
+                        cwd=repo_dir,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
 
                 project_license = detect_project_license(repo_dir)
                 if not project_license:
@@ -246,6 +278,7 @@ spec:
                         "reason": "Could not detect a project license from LICENSE, package.json, or pyproject.toml in the repository.",
                         "report": "",
                         "repository": repo,
+                        "last_pr_number": last_pr_number,
                         "license_stats": [],
                         "summary": {
                             "total_dependencies": 0,
@@ -326,6 +359,7 @@ spec:
                     "reason": reason,
                     "report": report,
                     "repository": repo,
+                    "last_pr_number": last_pr_number,
                     "license_stats": license_stats,
                     "summary": {
                         "total_dependencies": len(dependencies),
@@ -345,7 +379,7 @@ spec:
     type: TYPE_ACTION
     component: if
     configuration:
-      expression: '{{ $["Run license check"].data.result.summary.total_dependencies > 0 }}'
+      expression: '{{ $["Run license check"].data.result.project_license != "" }}'
     position:
       x: 2520
       "y": 100
@@ -358,7 +392,7 @@ spec:
     configuration:
       matchList:
       - name: repository
-        value: '{{ root().data.repository.full_name }}'
+        value: '{{ $["Run license check"].data.result.repository }}'
       namespace: ossGuardLicenseStats
     position:
       x: 3120
@@ -375,13 +409,13 @@ spec:
       listSource: "$['Run license check'].data.result.license_stats"
       matchList:
       - name: repository
-        value: '{{ root().data.repository.full_name }}'
+        value: '{{ $["Run license check"].data.result.repository }}'
       - name: license
         value: stat.license
       namespace: ossGuardLicenseStats
       valueList:
       - name: repository
-        value: '{{ root().data.repository.full_name }}'
+        value: '{{ $["Run license check"].data.result.repository }}'
       - name: license
         value: stat.license
       - name: dependency_count
@@ -404,11 +438,11 @@ spec:
     configuration:
       matchList:
       - name: repository
-        value: '{{ root().data.repository.full_name }}'
+        value: '{{ $["Run license check"].data.result.repository }}'
       namespace: ossGuardScanSummary
       valueList:
       - name: repository
-        value: '{{ root().data.repository.full_name }}'
+        value: '{{ $["Run license check"].data.result.repository }}'
       - name: project_license
         value: '{{ $["Run license check"].data.result.project_license }}'
       - name: total_dependencies
@@ -420,10 +454,22 @@ spec:
       - name: last_checked_at
         value: '{{ int(now().Unix()) }}'
       - name: last_pr_number
-        value: '{{ root().data.pull_request.number }}'
+        value: '{{ $["Run license check"].data.result.last_pr_number }}'
     position:
       x: 4320
       "y": 100
+    isCollapsed: false
+    paused: false
+  - id: if-from-pr
+    name: From PR?
+    type: TYPE_ACTION
+    component: if
+    configuration:
+      expression: '{{ root().data.action == "opened" || root().data.action == "synchronize"
+        || root().data.action == "reopened" }}'
+    position:
+      x: 4920
+      "y": 220
     isCollapsed: false
     paused: false
   - id: if-licenses-valid
@@ -433,7 +479,7 @@ spec:
     configuration:
       expression: '{{ $["Run license check"].data.result.valid == true }}'
     position:
-      x: 4920
+      x: 5520
       "y": 100
     isCollapsed: false
     paused: false
@@ -448,7 +494,7 @@ spec:
       sha: '{{ root().data.pull_request.head.sha }}'
       state: success
     position:
-      x: 5520
+      x: 6120
       "y": 0
     isCollapsed: false
     paused: false
@@ -463,7 +509,7 @@ spec:
       sha: '{{ root().data.pull_request.head.sha }}'
       state: failure
     position:
-      x: 5520
+      x: 6120
       "y": 220
     isCollapsed: false
     paused: false
@@ -475,7 +521,7 @@ spec:
       expression: '{{ root().data.action == "opened" || root().data.action == "synchronize"
         || root().data.action == "reopened" }}'
     position:
-      x: 6120
+      x: 6720
       "y": 220
     isCollapsed: false
     paused: false
@@ -502,8 +548,27 @@ spec:
       issueNumber: '{{ root().data.pull_request.number }}'
       repository: '{{ root().data.repository.name }}'
     position:
-      x: 6720
+      x: 7320
       "y": 220
+    isCollapsed: false
+    paused: false
+  - id: trigger-setup
+    name: Setup
+    type: TYPE_TRIGGER
+    component: start
+    configuration:
+      templates:
+      - name: run
+        parameters:
+        - name: repository
+          placeholder: e.g. superplanehq/superplane
+          title: Repository
+          type: string
+        payload:
+          repository: '{{ parameters.repository }}'
+    position:
+      x: 120
+      "y": 350
     isCollapsed: false
     paused: false
   - id: trigger-add-license
@@ -606,10 +671,16 @@ spec:
     targetId: record-scan-summary
     channel: default
   - sourceId: record-scan-summary
+    targetId: if-from-pr
+    channel: default
+  - sourceId: if-from-pr
     targetId: if-licenses-valid
+    channel: 'true'
+  - sourceId: trigger-setup
+    targetId: read-licenses
     channel: default
   - sourceId: if-has-stats
-    targetId: if-licenses-valid
+    targetId: if-from-pr
     channel: 'false'
   - sourceId: if-licenses-valid
     targetId: publish-success-status
