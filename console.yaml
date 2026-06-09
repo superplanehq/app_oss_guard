@@ -1,0 +1,242 @@
+---
+apiVersion: v1
+kind: Console
+metadata:
+  canvasId: 522a35cb-9016-4b1e-aa57-883b92e104c6
+  name: app-oss-guard
+spec:
+  panels:
+  - id: readme
+    type: markdown
+    content:
+      body: |
+        OSS Guard runs [license_finder](https://github.com/pivotal/LicenseFinder) on every pull request and checks that dependencies are compatible with your project's license.
+
+        <details open>
+        <summary>Quick start</summary>
+
+        1. **Add a LICENSE file** (or set `license` in `package.json` / `pyproject.toml`) in your repository — OSS Guard reads the project license from source code.
+        2. **Connect GitHub** — bind a GitHub integration on the canvas nodes, then select the repository on **On Pull Request**.
+        3. **Optional:** add extra permitted dependency licenses below, or a `GITHUB_TOKEN` secret on **Run license check** for private repositories.
+
+        </details>
+
+        <details>
+        <summary>License statistics</summary>
+
+        After each PR check, dependency license statistics are saved here — total dependencies, unique licenses, a breakdown chart, and the latest scan summary. Stats refresh when a pull request triggers a new check.
+
+        </details>
+      title: OSS Guard
+  - id: kpi-total-dependencies
+    type: number
+    content:
+      dataSource:
+        kind: memory
+        namespace: ossGuardScanSummary
+      render:
+        aggregation: sum
+        field: total_dependencies
+        kind: number
+        label: dependencies
+      title: Total dependencies
+  - id: kpi-unique-licenses
+    type: number
+    content:
+      dataSource:
+        kind: memory
+        namespace: ossGuardScanSummary
+      render:
+        aggregation: sum
+        field: unique_licenses
+        kind: number
+        label: license types
+      title: Unique licenses
+  - id: kpi-unapproved
+    type: number
+    content:
+      dataSource:
+        kind: memory
+        namespace: ossGuardScanSummary
+      render:
+        aggregation: sum
+        field: unapproved_dependencies
+        kind: number
+        label: dependencies
+      title: Unapproved
+  - id: chart-licenses
+    type: chart
+    content:
+      dataSource:
+        kind: memory
+        namespace: ossGuardLicenseStats
+      render:
+        kind: chart
+        legend: hide
+        series:
+        - field: dependency_count
+          label: Dependencies
+        type: bar
+        xField: license
+      title: Licenses in use
+  - id: license-stats-table
+    type: table
+    content:
+      dataSource:
+        kind: memory
+        namespace: ossGuardLicenseStats
+      render:
+        columns:
+        - field: license
+          label: License
+        - field: dependency_count
+          format: number
+          label: Dependencies
+        - field: approved
+          format: badge
+          label: Approved
+        - field: last_checked_at
+          format: relative
+          label: Last seen
+        kind: table
+        rowStyles:
+        - field: approved
+          op: eq
+          tone: red
+          value: 'false'
+        - field: approved
+          op: eq
+          tone: green
+          value: 'true'
+        sort:
+          field: dependency_count
+          order: desc
+      title: Dependency licenses
+  - id: scan-summary-table
+    type: table
+    content:
+      dataSource:
+        kind: memory
+        namespace: ossGuardScanSummary
+      render:
+        columns:
+        - field: repository
+          label: Repository
+        - field: project_license
+          format: badge
+          label: Project license
+        - field: total_dependencies
+          format: number
+          label: Dependencies
+        - field: unique_licenses
+          format: number
+          label: License types
+        - field: unapproved_dependencies
+          format: number
+          label: Unapproved
+        - field: last_pr_number
+          label: Last PR
+        - field: last_checked_at
+          format: relative
+          label: Last check
+        kind: table
+        sort:
+          field: last_checked_at
+          order: desc
+      title: Latest scans
+  - id: licenses-table
+    type: table
+    content:
+      dataSource:
+        kind: memory
+        namespace: ossGuardLicenses
+      render:
+        columns:
+        - field: license
+          label: License
+        - field: description
+          label: Description
+        kind: table
+        rowActions:
+        - confirm: Remove {{ license }} from additional permitted licenses?
+          icon: trash
+          kind: trigger
+          label: Delete
+          node: delete-license
+          payload:
+            license: "{{ license }}"
+          variant: danger
+        sort:
+          field: license
+          order: asc
+      title: Additional permitted dependency licenses
+  - id: add-license-panel
+    type: node
+    content:
+      node: add-license
+      showRun: true
+      title: Add permitted license
+  layout:
+  - i: readme
+    x: 0
+    "y": 0
+    w: 4
+    h: 8
+    minW: 2
+    minH: 2
+  - i: kpi-total-dependencies
+    x: 4
+    "y": 0
+    w: 2
+    h: 4
+    minW: 2
+    minH: 2
+  - i: kpi-unique-licenses
+    x: 6
+    "y": 0
+    w: 2
+    h: 4
+    minW: 2
+    minH: 2
+  - i: kpi-unapproved
+    x: 8
+    "y": 0
+    w: 2
+    h: 4
+    minW: 2
+    minH: 2
+  - i: chart-licenses
+    x: 4
+    "y": 4
+    w: 6
+    h: 4
+    minW: 4
+    minH: 3
+  - i: license-stats-table
+    x: 0
+    "y": 8
+    w: 7
+    h: 7
+    minW: 4
+    minH: 4
+  - i: scan-summary-table
+    x: 7
+    "y": 8
+    w: 5
+    h: 7
+    minW: 4
+    minH: 4
+  - i: licenses-table
+    x: 0
+    "y": 15
+    w: 9
+    h: 5
+    minW: 4
+    minH: 3
+  - i: add-license-panel
+    x: 9
+    "y": 15
+    w: 3
+    h: 3
+    minW: 2
+    minH: 2

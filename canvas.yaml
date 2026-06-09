@@ -1,0 +1,631 @@
+---
+apiVersion: v1
+kind: Canvas
+metadata:
+  id: 522a35cb-9016-4b1e-aa57-883b92e104c6
+  name: app-oss-guard
+  description: Check pull request dependencies for open-source license compatibility using license_finder.
+  isTemplate: false
+spec:
+  nodes:
+  - id: trigger-on-pull-request
+    name: On Pull Request
+    type: TYPE_TRIGGER
+    component: github.onPullRequest
+    configuration:
+      actions:
+      - opened
+      - synchronize
+      - reopened
+      repository: ''
+    position:
+      x: 120
+      "y": 100
+    isCollapsed: false
+    paused: false
+  - id: if-should-check
+    name: Should check?
+    type: TYPE_ACTION
+    component: if
+    configuration:
+      expression: '{{ root().data.action == "opened" || root().data.action == "synchronize"
+        || root().data.action == "reopened" }}'
+    position:
+      x: 720
+      "y": 100
+    isCollapsed: false
+    paused: false
+  - id: read-licenses
+    name: Read licenses
+    type: TYPE_ACTION
+    component: readMemory
+    configuration:
+      emitMode: allAtOnce
+      matchList:
+      - name: enabled
+        value: 'true'
+      namespace: ossGuardLicenses
+      resultMode: all
+    position:
+      x: 1320
+      "y": 100
+    isCollapsed: false
+    paused: false
+  - id: run-license-check
+    name: Run license check
+    type: TYPE_ACTION
+    component: runnerPython
+    configuration:
+      docker_image_preset: python:3.12-slim
+      enable_setup_commands: true
+      execution_mode: docker
+      execution_timeout_seconds: 900
+      machine_type: e1-tiny-arm64
+      setup_commands: |
+        apt-get update -qq
+        apt-get install -y -qq git ruby ruby-dev build-essential
+        gem install license_finder --no-document
+      script: |
+        import json
+        import os
+        import re
+        import shutil
+        import subprocess
+        import tempfile
+
+        PERMISSIVE = [
+            "MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC",
+            "0BSD", "Unlicense", "CC0-1.0", "Zlib", "MPL-2.0", "OpenSSL",
+        ]
+
+        COMPATIBILITY = {
+            "MIT": PERMISSIVE,
+            "APACHE-2.0": PERMISSIVE,
+            "BSD-2-CLAUSE": PERMISSIVE,
+            "BSD-3-CLAUSE": PERMISSIVE,
+            "ISC": PERMISSIVE,
+            "0BSD": PERMISSIVE,
+            "UNLICENSE": PERMISSIVE,
+            "CC0-1.0": PERMISSIVE,
+            "ZLIB": PERMISSIVE,
+            "MPL-2.0": PERMISSIVE,
+            "GPL-3.0": ["GPL-3.0", "GPL-2.0", "LGPL-3.0", "LGPL-2.1", "AGPL-3.0", "MPL-2.0"] + PERMISSIVE,
+            "GPL-2.0": ["GPL-2.0", "LGPL-2.1"] + PERMISSIVE,
+            "LGPL-3.0": ["LGPL-3.0", "GPL-3.0", "GPL-2.0", "LGPL-2.1", "MPL-2.0"] + PERMISSIVE,
+            "LGPL-2.1": ["LGPL-2.1", "GPL-2.0"] + PERMISSIVE,
+            "AGPL-3.0": ["AGPL-3.0", "GPL-3.0", "GPL-2.0"],
+        }
+
+        LICENSE_TEXT_PATTERNS = [
+            (r"\bMIT License\b", "MIT"),
+            (r"\bApache License, Version 2\.0\b", "Apache-2.0"),
+            (r"\bApache License 2\.0\b", "Apache-2.0"),
+            (r"\bBSD 2-Clause\b", "BSD-2-Clause"),
+            (r"\bBSD 3-Clause\b", "BSD-3-Clause"),
+            (r"\bISC License\b", "ISC"),
+            (r"\bGNU GENERAL PUBLIC LICENSE\b[\s\S]*Version 3", "GPL-3.0"),
+            (r"\bGNU GENERAL PUBLIC LICENSE\b[\s\S]*Version 2", "GPL-2.0"),
+            (r"\bGNU LESSER GENERAL PUBLIC LICENSE\b[\s\S]*Version 3", "LGPL-3.0"),
+            (r"\bGNU LESSER GENERAL PUBLIC LICENSE\b[\s\S]*Version 2\.1", "LGPL-2.1"),
+            (r"\bGNU AFFERO GENERAL PUBLIC LICENSE\b[\s\S]*Version 3", "AGPL-3.0"),
+        ]
+
+        def normalize_license(value):
+            return re.sub(r"[^A-Za-z0-9.+-]", "", str(value or "").strip()).upper()
+
+        def detect_from_license_file(repo_dir):
+            for name in ["LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING", "COPYING.md"]:
+                path = os.path.join(repo_dir, name)
+                if not os.path.isfile(path):
+                    continue
+                try:
+                    with open(path, encoding="utf-8", errors="ignore") as handle:
+                        text = handle.read()
+                except OSError:
+                    continue
+
+                spdx = re.search(r"SPDX-License-Identifier:\s*([A-Za-z0-9.+-]+)", text, re.I)
+                if spdx:
+                    return spdx.group(1)
+
+                for pattern, spdx_id in LICENSE_TEXT_PATTERNS:
+                    if re.search(pattern, text, re.I):
+                        return spdx_id
+            return None
+
+        def detect_from_package_json(repo_dir):
+            path = os.path.join(repo_dir, "package.json")
+            if not os.path.isfile(path):
+                return None
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    data = json.load(handle)
+            except (OSError, json.JSONDecodeError):
+                return None
+
+            lic = data.get("license")
+            if isinstance(lic, str) and lic.strip():
+                return lic.strip()
+            if isinstance(lic, dict) and lic.get("type"):
+                return str(lic["type"]).strip()
+            return None
+
+        def detect_from_pyproject(repo_dir):
+            path = os.path.join(repo_dir, "pyproject.toml")
+            if not os.path.isfile(path):
+                return None
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    text = handle.read()
+            except OSError:
+                return None
+
+            match = re.search(r'^\s*license\s*=\s*"([^"]+)"', text, re.M)
+            if match:
+                return match.group(1)
+            match = re.search(r'^\s*license\s*=\s*\{\s*text\s*=\s*"([^"]+)"', text, re.M)
+            if match:
+                return match.group(1)
+            return None
+
+        def detect_project_license(repo_dir):
+            for detector in (detect_from_license_file, detect_from_package_json, detect_from_pyproject):
+                found = detector(repo_dir)
+                if found:
+                    return found.strip()
+            return None
+
+        def approved_for_project(project_license, extra_licenses):
+            key = normalize_license(project_license)
+            base = COMPATIBILITY.get(key, PERMISSIVE)
+            approved = []
+            seen = set()
+            for lic in base + extra_licenses:
+                norm = normalize_license(lic)
+                if not norm or norm in seen:
+                    continue
+                seen.add(norm)
+                approved.append(lic.strip())
+            return approved
+
+        def main(payload):
+            event = (payload.get("On Pull Request") or {}).get("data") or {}
+            repo = (event.get("repository") or {}).get("full_name", "")
+            sha = ((event.get("pull_request") or {}).get("head") or {}).get("sha", "")
+
+            extra = []
+            seen = set()
+            license_rows = ((payload.get("Read licenses") or {}).get("data") or {}).get("values") or []
+            for row in license_rows:
+                if str((row or {}).get("enabled")) != "true":
+                    continue
+                lic = str((row or {}).get("license") or "").strip()
+                norm = normalize_license(lic)
+                if not lic or norm in seen:
+                    continue
+                seen.add(norm)
+                extra.append(lic)
+
+            workdir = tempfile.mkdtemp()
+
+            try:
+                clone_url = "https://github.com/{0}.git".format(repo)
+                token = os.environ.get("GITHUB_TOKEN")
+                if token:
+                    clone_url = "https://x-access-token:{0}@github.com/{1}.git".format(token, repo)
+
+                repo_dir = os.path.join(workdir, "repo")
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", clone_url, repo_dir],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                subprocess.run(
+                    ["git", "fetch", "--depth", "1", "origin", sha],
+                    cwd=repo_dir,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                subprocess.run(
+                    ["git", "checkout", sha],
+                    cwd=repo_dir,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+
+                project_license = detect_project_license(repo_dir)
+                if not project_license:
+                    return {
+                        "valid": False,
+                        "project_license": "",
+                        "project_license_source": "",
+                        "approved_licenses": "",
+                        "reason": "Could not detect a project license from LICENSE, package.json, or pyproject.toml in the repository.",
+                        "report": "",
+                        "repository": repo,
+                        "license_stats": [],
+                        "summary": {
+                            "total_dependencies": 0,
+                            "unique_licenses": 0,
+                            "unapproved_dependencies": 0,
+                        },
+                    }
+
+                approved = approved_for_project(project_license, extra)
+                approved_str = ",".join(approved)
+                approved_set = set(normalize_license(item) for item in approved)
+
+                report_result = subprocess.run(
+                    [
+                        "license_finder",
+                        "report",
+                        "--format",
+                        "json",
+                        "--columns",
+                        "name,version,licenses,approved,package_manager",
+                        "--approved_licenses",
+                        approved_str,
+                    ],
+                    cwd=repo_dir,
+                    capture_output=True,
+                    text=True,
+                )
+                report_data = json.loads(report_result.stdout or '{"dependencies":[]}')
+                dependencies = report_data.get("dependencies") or []
+
+                license_counts = {}
+                unapproved_dependencies = 0
+                for dep in dependencies:
+                    licenses = dep.get("licenses") or []
+                    if not licenses:
+                        license_name = "Unknown"
+                    elif len(licenses) == 1:
+                        license_name = str(licenses[0])
+                    else:
+                        license_name = ", ".join(str(item) for item in licenses)
+
+                    license_counts[license_name] = license_counts.get(license_name, 0) + 1
+
+                    approved_value = dep.get("approved")
+                    if approved_value is False or str(approved_value).lower() == "false":
+                        unapproved_dependencies += 1
+
+                license_stats = []
+                for license_name, count in sorted(license_counts.items()):
+                    primary = license_name.split(",")[0].strip()
+                    license_stats.append(
+                        {
+                            "license": license_name,
+                            "dependency_count": count,
+                            "approved": "true"
+                            if normalize_license(primary) in approved_set
+                            else "false",
+                        }
+                    )
+
+                result = subprocess.run(
+                    ["license_finder", "--approved_licenses", approved_str],
+                    cwd=repo_dir,
+                    capture_output=True,
+                    text=True,
+                )
+                report = ((result.stdout or "") + (result.stderr or "")).strip()
+                valid = result.returncode == 0
+                reason = ""
+                if not valid:
+                    reason = "One or more dependencies use licenses that are not compatible with the project license."
+
+                return {
+                    "valid": valid,
+                    "project_license": project_license,
+                    "project_license_source": "repository",
+                    "approved_licenses": approved_str,
+                    "reason": reason,
+                    "report": report,
+                    "repository": repo,
+                    "license_stats": license_stats,
+                    "summary": {
+                        "total_dependencies": len(dependencies),
+                        "unique_licenses": len(license_counts),
+                        "unapproved_dependencies": unapproved_dependencies,
+                    },
+                }
+            finally:
+                shutil.rmtree(workdir, ignore_errors=True)
+    position:
+      x: 1920
+      "y": 100
+    isCollapsed: false
+    paused: false
+  - id: if-has-stats
+    name: Has stats?
+    type: TYPE_ACTION
+    component: if
+    configuration:
+      expression: '{{ $["Run license check"].data.result.summary.total_dependencies > 0 }}'
+    position:
+      x: 2520
+      "y": 100
+    isCollapsed: false
+    paused: false
+  - id: clear-license-stats
+    name: Clear license stats
+    type: TYPE_ACTION
+    component: deleteMemory
+    configuration:
+      matchList:
+      - name: repository
+        value: '{{ root().data.repository.full_name }}'
+      namespace: ossGuardLicenseStats
+    position:
+      x: 3120
+      "y": 100
+    isCollapsed: false
+    paused: false
+  - id: record-license-stats
+    name: Record license stats
+    type: TYPE_ACTION
+    component: upsertMemory
+    configuration:
+      iterateList: true
+      itemVariable: stat
+      listSource: "$['Run license check'].data.result.license_stats"
+      matchList:
+      - name: repository
+        value: '{{ root().data.repository.full_name }}'
+      - name: license
+        value: stat.license
+      namespace: ossGuardLicenseStats
+      valueList:
+      - name: repository
+        value: '{{ root().data.repository.full_name }}'
+      - name: license
+        value: stat.license
+      - name: dependency_count
+        value: stat.dependency_count
+      - name: approved
+        value: stat.approved
+      - name: project_license
+        value: '{{ $["Run license check"].data.result.project_license }}'
+      - name: last_checked_at
+        value: '{{ int(now().Unix()) }}'
+    position:
+      x: 3720
+      "y": 100
+    isCollapsed: false
+    paused: false
+  - id: record-scan-summary
+    name: Record scan summary
+    type: TYPE_ACTION
+    component: upsertMemory
+    configuration:
+      matchList:
+      - name: repository
+        value: '{{ root().data.repository.full_name }}'
+      namespace: ossGuardScanSummary
+      valueList:
+      - name: repository
+        value: '{{ root().data.repository.full_name }}'
+      - name: project_license
+        value: '{{ $["Run license check"].data.result.project_license }}'
+      - name: total_dependencies
+        value: '{{ $["Run license check"].data.result.summary.total_dependencies }}'
+      - name: unique_licenses
+        value: '{{ $["Run license check"].data.result.summary.unique_licenses }}'
+      - name: unapproved_dependencies
+        value: '{{ $["Run license check"].data.result.summary.unapproved_dependencies }}'
+      - name: last_checked_at
+        value: '{{ int(now().Unix()) }}'
+      - name: last_pr_number
+        value: '{{ root().data.pull_request.number }}'
+    position:
+      x: 4320
+      "y": 100
+    isCollapsed: false
+    paused: false
+  - id: if-licenses-valid
+    name: Licenses valid?
+    type: TYPE_ACTION
+    component: if
+    configuration:
+      expression: '{{ $["Run license check"].data.result.valid == true }}'
+    position:
+      x: 4920
+      "y": 100
+    isCollapsed: false
+    paused: false
+  - id: publish-success-status
+    name: Publish success status
+    type: TYPE_ACTION
+    component: github.publishCommitStatus
+    configuration:
+      context: OSS Guard
+      description: All dependencies use permitted open-source licenses.
+      repository: '{{ root().data.repository.name }}'
+      sha: '{{ root().data.pull_request.head.sha }}'
+      state: success
+    position:
+      x: 5520
+      "y": 0
+    isCollapsed: false
+    paused: false
+  - id: publish-failure-status
+    name: Publish failure status
+    type: TYPE_ACTION
+    component: github.publishCommitStatus
+    configuration:
+      context: OSS Guard
+      description: '{{ $["Run license check"].data.result.reason }}'
+      repository: '{{ root().data.repository.name }}'
+      sha: '{{ root().data.pull_request.head.sha }}'
+      state: failure
+    position:
+      x: 5520
+      "y": 220
+    isCollapsed: false
+    paused: false
+  - id: if-should-comment
+    name: Should comment?
+    type: TYPE_ACTION
+    component: if
+    configuration:
+      expression: '{{ root().data.action == "opened" || root().data.action == "synchronize"
+        || root().data.action == "reopened" }}'
+    position:
+      x: 6120
+      "y": 220
+    isCollapsed: false
+    paused: false
+  - id: comment-failure
+    name: Comment on PR
+    type: TYPE_ACTION
+    component: github.createIssueComment
+    configuration:
+      body: |
+        :x: **OSS Guard** found dependency licenses that are not permitted for this project.
+
+        **Project license (from repository):** {{ $["Run license check"].data.result.project_license }}
+
+        **Permitted dependency licenses:** {{ $["Run license check"].data.result.approved_licenses }}
+
+        **Reason:** {{ $["Run license check"].data.result.reason }}
+
+        **license_finder report:**
+        ```
+        {{ $["Run license check"].data.result.report }}
+        ```
+
+        Configure additional permitted licenses in the OSS Guard console, or add approved exceptions in your repository's `config/dependency_decisions.yml`.
+      issueNumber: '{{ root().data.pull_request.number }}'
+      repository: '{{ root().data.repository.name }}'
+    position:
+      x: 6720
+      "y": 220
+    isCollapsed: false
+    paused: false
+  - id: trigger-add-license
+    name: add-license
+    type: TYPE_TRIGGER
+    component: start
+    configuration:
+      templates:
+      - name: run
+        parameters:
+        - name: license
+          title: License identifier
+          type: string
+        - name: description
+          title: Description
+          type: string
+        payload:
+          description: '{{ parameters.description }}'
+          license: '{{ parameters.license }}'
+    position:
+      x: 120
+      "y": 500
+    isCollapsed: false
+    paused: false
+  - id: register-license
+    name: Register license
+    type: TYPE_ACTION
+    component: upsertMemory
+    configuration:
+      matchList:
+      - name: license
+        value: '{{ $["add-license"].data.license }}'
+      namespace: ossGuardLicenses
+      valueList:
+      - name: license
+        value: '{{ $["add-license"].data.license }}'
+      - name: description
+        value: '{{ $["add-license"].data.description }}'
+      - name: enabled
+        value: 'true'
+    position:
+      x: 720
+      "y": 500
+    isCollapsed: false
+    paused: false
+  - id: trigger-delete-license
+    name: delete-license
+    type: TYPE_TRIGGER
+    component: start
+    configuration:
+      templates:
+      - name: run
+        payload:
+          license: '{{ parameters.license }}'
+    position:
+      x: 120
+      "y": 650
+    isCollapsed: false
+    paused: false
+  - id: remove-license
+    name: Remove license
+    type: TYPE_ACTION
+    component: deleteMemory
+    configuration:
+      matchList:
+      - name: license
+        value: '{{ $["delete-license"].data.license }}'
+      namespace: ossGuardLicenses
+    position:
+      x: 720
+      "y": 650
+    isCollapsed: false
+    paused: false
+  edges:
+  - sourceId: trigger-on-pull-request
+    targetId: if-should-check
+    channel: default
+  - sourceId: if-should-check
+    targetId: read-licenses
+    channel: 'true'
+  - sourceId: read-licenses
+    targetId: run-license-check
+    channel: found
+  - sourceId: read-licenses
+    targetId: run-license-check
+    channel: notFound
+  - sourceId: run-license-check
+    targetId: if-has-stats
+    channel: passed
+  - sourceId: if-has-stats
+    targetId: clear-license-stats
+    channel: 'true'
+  - sourceId: clear-license-stats
+    targetId: record-license-stats
+    channel: deleted
+  - sourceId: clear-license-stats
+    targetId: record-license-stats
+    channel: notFound
+  - sourceId: record-license-stats
+    targetId: record-scan-summary
+    channel: default
+  - sourceId: record-scan-summary
+    targetId: if-licenses-valid
+    channel: default
+  - sourceId: if-has-stats
+    targetId: if-licenses-valid
+    channel: 'false'
+  - sourceId: if-licenses-valid
+    targetId: publish-success-status
+    channel: 'true'
+  - sourceId: if-licenses-valid
+    targetId: publish-failure-status
+    channel: 'false'
+  - sourceId: publish-failure-status
+    targetId: if-should-comment
+    channel: default
+  - sourceId: if-should-comment
+    targetId: comment-failure
+    channel: 'true'
+  - sourceId: trigger-add-license
+    targetId: register-license
+    channel: default
+  - sourceId: trigger-delete-license
+    targetId: remove-license
+    channel: default
