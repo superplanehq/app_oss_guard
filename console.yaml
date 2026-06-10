@@ -79,7 +79,7 @@ spec:
         <details>
         <summary>Add exceptions</summary>
 
-        Add approved dependency exceptions in your repository's `osv-scanner.toml`.
+        Add approved dependency exceptions in `osv-scanner.toml` at the repository root. OSS Guard passes `--config` so overrides apply to all lockfiles (including subdirectories like `web_src/`).
 
         </details>
       title: Quick Start

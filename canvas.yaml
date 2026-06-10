@@ -313,6 +313,40 @@ spec:
                 str(dep.get("version") or ""),
             )
 
+        def load_license_ignored_packages(repo_dir):
+            config_path = os.path.join(repo_dir, "osv-scanner.toml")
+            ignored = set()
+            if not os.path.isfile(config_path):
+                return ignored
+
+            try:
+                with open(config_path, encoding="utf-8") as handle:
+                    text = handle.read()
+            except OSError:
+                log("Could not read osv-scanner config: " + config_path)
+                return ignored
+
+            for block in re.split(r"\[\[PackageOverrides\]\]", text)[1:]:
+                name_match = re.search(r'^\s*name\s*=\s*"([^"]+)"', block, re.M)
+                ecosystem_match = re.search(
+                    r'^\s*ecosystem\s*=\s*"([^"]+)"',
+                    block,
+                    re.M,
+                )
+                if not name_match:
+                    continue
+                if not re.search(r"^\s*license\.ignore\s*=\s*true\s*$", block, re.M):
+                    continue
+                ecosystem = ecosystem_match.group(1) if ecosystem_match else ""
+                ignored.add((ecosystem, name_match.group(1)))
+
+            if ignored:
+                log(
+                    "Loaded " + str(len(ignored)) +
+                    " license.ignore overrides from osv-scanner.toml"
+                )
+            return ignored
+
         def run_osv_scan(repo_dir, approved_str):
             command = [
                 "osv-scanner",
@@ -322,8 +356,12 @@ spec:
                 "--format=json",
                 "--all-packages",
                 "--licenses=" + approved_str,
-                repo_dir,
             ]
+            config_path = os.path.join(repo_dir, "osv-scanner.toml")
+            if os.path.isfile(config_path):
+                command.append("--config=" + config_path)
+                log("Using osv-scanner config: " + config_path)
+            command.append(repo_dir)
             log("Running osv-scanner on " + repo_dir)
             result = subprocess.run(
                 command,
@@ -366,10 +404,11 @@ spec:
                     if not name:
                         continue
 
+                    raw_licenses = entry.get("licenses")
                     dep = {
                         "name": name,
                         "version": version,
-                        "licenses": entry.get("licenses") or ["Unknown"],
+                        "licenses": raw_licenses if raw_licenses is not None else [],
                         "package_manager": ecosystem,
                         "license_violations": entry.get("license_violations") or [],
                         "source": source,
@@ -459,37 +498,51 @@ spec:
                     return True
             return False
 
-        def dependency_license_name(dep):
-            licenses = dep.get("licenses") or []
+        def dependency_license_name(dep, ignored_packages=None):
+            licenses = dep.get("licenses")
+            if licenses is None:
+                licenses = []
             if not licenses:
+                key = (
+                    str(dep.get("package_manager") or ""),
+                    str(dep.get("name") or ""),
+                )
+                if ignored_packages and key in ignored_packages:
+                    return "Ignored (osv-scanner.toml)"
                 return "Unknown"
             if len(licenses) == 1:
                 return str(licenses[0])
             return ", ".join(str(item) for item in licenses)
 
-        def dependency_is_approved(dep, approved_set):
+        def dependency_is_approved(dep, approved_set, ignored_packages=None):
             violations = dep.get("license_violations") or []
             if violations:
                 return False
 
-            licenses = dep.get("licenses") or []
-            if not licenses or licenses == ["Unknown"]:
-                return False
+            licenses = dep.get("licenses")
+            if licenses is None:
+                licenses = []
+            if not licenses:
+                key = (
+                    str(dep.get("package_manager") or ""),
+                    str(dep.get("name") or ""),
+                )
+                return key in (ignored_packages or set())
 
             for license_name in licenses:
                 if not license_expression_approved(license_name, approved_set):
                     return False
             return True
 
-        def build_license_stats(dependencies, approved_set):
+        def build_license_stats(dependencies, approved_set, ignored_packages=None):
             license_counts = {}
             unapproved_dependencies = 0
 
             for dep in dependencies:
-                license_name = dependency_license_name(dep)
+                license_name = dependency_license_name(dep, ignored_packages)
                 license_counts[license_name] = license_counts.get(license_name, 0) + 1
 
-                if not dependency_is_approved(dep, approved_set):
+                if not dependency_is_approved(dep, approved_set, ignored_packages):
                     unapproved_dependencies += 1
 
             license_stats = []
@@ -498,17 +551,18 @@ spec:
                     "license": license_name,
                     "dependency_count": count,
                     "approved": "true"
-                    if license_expression_approved(license_name, approved_set)
+                    if license_name == "Ignored (osv-scanner.toml)"
+                    or license_expression_approved(license_name, approved_set)
                     else "false",
                 })
 
             return license_stats, unapproved_dependencies
 
-        def build_report(dependencies, approved_set, limit=50):
+        def build_report(dependencies, approved_set, ignored_packages=None, limit=50):
             lines = []
             unapproved = [
                 dep for dep in dependencies
-                if not dependency_is_approved(dep, approved_set)
+                if not dependency_is_approved(dep, approved_set, ignored_packages)
             ]
             for dep in sorted(
                 unapproved,
@@ -519,7 +573,7 @@ spec:
                         dep.get("name", ""),
                         dep.get("version", ""),
                         dep.get("package_manager", ""),
-                        dependency_license_name(dep),
+                        dependency_license_name(dep, ignored_packages),
                     )
                 )
 
@@ -528,10 +582,10 @@ spec:
                 lines.append("... and {0} more unapproved dependencies".format(remaining))
             return "\n".join(lines)
 
-        def build_unapproved_list(dependencies, approved_set, limit=200):
+        def build_unapproved_list(dependencies, approved_set, ignored_packages=None, limit=200):
             unapproved = [
                 dep for dep in dependencies
-                if not dependency_is_approved(dep, approved_set)
+                if not dependency_is_approved(dep, approved_set, ignored_packages)
             ]
             rows = []
             for dep in sorted(
@@ -542,7 +596,7 @@ spec:
                     "name": str(dep.get("name") or ""),
                     "version": str(dep.get("version") or ""),
                     "package_manager": str(dep.get("package_manager") or ""),
-                    "license": dependency_license_name(dep),
+                    "license": dependency_license_name(dep, ignored_packages),
                 })
             return rows
 
@@ -654,13 +708,20 @@ spec:
                 approved_set = set(normalize_license(item) for item in approved)
                 log("Permitted dependency licenses: " + approved_str)
 
+                ignored_packages = load_license_ignored_packages(repo_dir)
+
                 dependencies = collect_dependencies(repo_dir, approved_str)
                 license_stats, unapproved_dependencies = build_license_stats(
                     dependencies,
                     approved_set,
+                    ignored_packages,
                 )
-                report = build_report(dependencies, approved_set)
-                unapproved_dependencies_list = build_unapproved_list(dependencies, approved_set)
+                report = build_report(dependencies, approved_set, ignored_packages)
+                unapproved_dependencies_list = build_unapproved_list(
+                    dependencies,
+                    approved_set,
+                    ignored_packages,
+                )
                 valid = unapproved_dependencies == 0
                 reason = ""
                 if not valid:
@@ -919,6 +980,40 @@ spec:
                 str(dep.get("version") or ""),
             )
 
+        def load_license_ignored_packages(repo_dir):
+            config_path = os.path.join(repo_dir, "osv-scanner.toml")
+            ignored = set()
+            if not os.path.isfile(config_path):
+                return ignored
+
+            try:
+                with open(config_path, encoding="utf-8") as handle:
+                    text = handle.read()
+            except OSError:
+                log("Could not read osv-scanner config: " + config_path)
+                return ignored
+
+            for block in re.split(r"\[\[PackageOverrides\]\]", text)[1:]:
+                name_match = re.search(r'^\s*name\s*=\s*"([^"]+)"', block, re.M)
+                ecosystem_match = re.search(
+                    r'^\s*ecosystem\s*=\s*"([^"]+)"',
+                    block,
+                    re.M,
+                )
+                if not name_match:
+                    continue
+                if not re.search(r"^\s*license\.ignore\s*=\s*true\s*$", block, re.M):
+                    continue
+                ecosystem = ecosystem_match.group(1) if ecosystem_match else ""
+                ignored.add((ecosystem, name_match.group(1)))
+
+            if ignored:
+                log(
+                    "Loaded " + str(len(ignored)) +
+                    " license.ignore overrides from osv-scanner.toml"
+                )
+            return ignored
+
         def run_osv_scan(repo_dir, approved_str):
             command = [
                 "osv-scanner",
@@ -928,8 +1023,12 @@ spec:
                 "--format=json",
                 "--all-packages",
                 "--licenses=" + approved_str,
-                repo_dir,
             ]
+            config_path = os.path.join(repo_dir, "osv-scanner.toml")
+            if os.path.isfile(config_path):
+                command.append("--config=" + config_path)
+                log("Using osv-scanner config: " + config_path)
+            command.append(repo_dir)
             log("Running osv-scanner on " + repo_dir)
             result = subprocess.run(
                 command,
@@ -972,10 +1071,11 @@ spec:
                     if not name:
                         continue
 
+                    raw_licenses = entry.get("licenses")
                     dep = {
                         "name": name,
                         "version": version,
-                        "licenses": entry.get("licenses") or ["Unknown"],
+                        "licenses": raw_licenses if raw_licenses is not None else [],
                         "package_manager": ecosystem,
                         "license_violations": entry.get("license_violations") or [],
                         "source": source,
@@ -1065,37 +1165,51 @@ spec:
                     return True
             return False
 
-        def dependency_license_name(dep):
-            licenses = dep.get("licenses") or []
+        def dependency_license_name(dep, ignored_packages=None):
+            licenses = dep.get("licenses")
+            if licenses is None:
+                licenses = []
             if not licenses:
+                key = (
+                    str(dep.get("package_manager") or ""),
+                    str(dep.get("name") or ""),
+                )
+                if ignored_packages and key in ignored_packages:
+                    return "Ignored (osv-scanner.toml)"
                 return "Unknown"
             if len(licenses) == 1:
                 return str(licenses[0])
             return ", ".join(str(item) for item in licenses)
 
-        def dependency_is_approved(dep, approved_set):
+        def dependency_is_approved(dep, approved_set, ignored_packages=None):
             violations = dep.get("license_violations") or []
             if violations:
                 return False
 
-            licenses = dep.get("licenses") or []
-            if not licenses or licenses == ["Unknown"]:
-                return False
+            licenses = dep.get("licenses")
+            if licenses is None:
+                licenses = []
+            if not licenses:
+                key = (
+                    str(dep.get("package_manager") or ""),
+                    str(dep.get("name") or ""),
+                )
+                return key in (ignored_packages or set())
 
             for license_name in licenses:
                 if not license_expression_approved(license_name, approved_set):
                     return False
             return True
 
-        def build_license_stats(dependencies, approved_set):
+        def build_license_stats(dependencies, approved_set, ignored_packages=None):
             license_counts = {}
             unapproved_dependencies = 0
 
             for dep in dependencies:
-                license_name = dependency_license_name(dep)
+                license_name = dependency_license_name(dep, ignored_packages)
                 license_counts[license_name] = license_counts.get(license_name, 0) + 1
 
-                if not dependency_is_approved(dep, approved_set):
+                if not dependency_is_approved(dep, approved_set, ignored_packages):
                     unapproved_dependencies += 1
 
             license_stats = []
@@ -1104,17 +1218,18 @@ spec:
                     "license": license_name,
                     "dependency_count": count,
                     "approved": "true"
-                    if license_expression_approved(license_name, approved_set)
+                    if license_name == "Ignored (osv-scanner.toml)"
+                    or license_expression_approved(license_name, approved_set)
                     else "false",
                 })
 
             return license_stats, unapproved_dependencies
 
-        def build_report(dependencies, approved_set, limit=50):
+        def build_report(dependencies, approved_set, ignored_packages=None, limit=50):
             lines = []
             unapproved = [
                 dep for dep in dependencies
-                if not dependency_is_approved(dep, approved_set)
+                if not dependency_is_approved(dep, approved_set, ignored_packages)
             ]
             for dep in sorted(
                 unapproved,
@@ -1125,7 +1240,7 @@ spec:
                         dep.get("name", ""),
                         dep.get("version", ""),
                         dep.get("package_manager", ""),
-                        dependency_license_name(dep),
+                        dependency_license_name(dep, ignored_packages),
                     )
                 )
 
@@ -1134,10 +1249,10 @@ spec:
                 lines.append("... and {0} more unapproved dependencies".format(remaining))
             return "\n".join(lines)
 
-        def build_unapproved_list(dependencies, approved_set, limit=200):
+        def build_unapproved_list(dependencies, approved_set, ignored_packages=None, limit=200):
             unapproved = [
                 dep for dep in dependencies
-                if not dependency_is_approved(dep, approved_set)
+                if not dependency_is_approved(dep, approved_set, ignored_packages)
             ]
             rows = []
             for dep in sorted(
@@ -1148,7 +1263,7 @@ spec:
                     "name": str(dep.get("name") or ""),
                     "version": str(dep.get("version") or ""),
                     "package_manager": str(dep.get("package_manager") or ""),
-                    "license": dependency_license_name(dep),
+                    "license": dependency_license_name(dep, ignored_packages),
                 })
             return rows
 
@@ -1260,13 +1375,20 @@ spec:
                 approved_set = set(normalize_license(item) for item in approved)
                 log("Permitted dependency licenses: " + approved_str)
 
+                ignored_packages = load_license_ignored_packages(repo_dir)
+
                 dependencies = collect_dependencies(repo_dir, approved_str)
                 license_stats, unapproved_dependencies = build_license_stats(
                     dependencies,
                     approved_set,
+                    ignored_packages,
                 )
-                report = build_report(dependencies, approved_set)
-                unapproved_dependencies_list = build_unapproved_list(dependencies, approved_set)
+                report = build_report(dependencies, approved_set, ignored_packages)
+                unapproved_dependencies_list = build_unapproved_list(
+                    dependencies,
+                    approved_set,
+                    ignored_packages,
+                )
                 valid = unapproved_dependencies == 0
                 reason = ""
                 if not valid:

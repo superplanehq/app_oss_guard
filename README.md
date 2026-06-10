@@ -37,7 +37,7 @@ Built with [SuperPlane](https://superplane.com).
 2. **Connect GitHub** — bind a GitHub integration on the canvas nodes, then select the repository on **On Pull Request**.
 3. **Run Setup** — enter the repository as `owner/repo` (for example, `superplanehq/superplane`).
 4. **Run Scan main** — scan `main` and populate the console.
-5. **Optional:** add a `GITHUB_TOKEN` secret on **Run setup scan** and **Run license check** for private repositories. Approve dependency exceptions in your repository's `osv-scanner.toml`.
+5. **Optional:** add a `GITHUB_TOKEN` secret on **Run setup scan** and **Run license check** for private repositories. Add dependency exceptions in `osv-scanner.toml` at the repository root (applies repo-wide).
 
 ## `GITHUB_TOKEN` secret
 
