@@ -2,126 +2,90 @@
 apiVersion: v1
 kind: Console
 metadata:
-  canvasId: 522a35cb-9016-4b1e-aa57-883b92e104c6
+  canvasId: 25414c17-e388-4bed-b1ac-e9775823177a
   name: app-oss-guard
 spec:
+  layout:
+  - h: 3
+    i: setup-panel
+    minH: 2
+    minW: 2
+    w: 2
+    x: 0
+    "y": 0
+  - h: 3
+    i: scan-main-panel
+    minH: 2
+    minW: 2
+    w: 3
+    x: 2
+    "y": 0
+  - h: 5
+    i: readme
+    minH: 3
+    minW: 3
+    w: 5
+    x: 0
+    "y": 3
+  - h: 5
+    i: scan-summary-table
+    minH: 3
+    minW: 4
+    w: 5
+    x: 0
+    "y": 8
+  - h: 5
+    i: unapproved-deps-table
+    minH: 4
+    minW: 6
+    w: 7
+    x: 5
+    "y": 8
+  - h: 8
+    i: license-stats-table
+    minH: 4
+    minW: 4
+    w: 7
+    x: 5
+    "y": 0
   panels:
-  - id: setup-panel
-    type: node
-    content:
+  - content:
       node: Setup
       showRun: true
       title: Setup
-  - id: readme
-    type: markdown
-    content:
+    id: setup-panel
+    type: node
+  - content:
+      node: Scan main
+      showRun: true
+      title: Scan main
+    id: scan-main-panel
+    type: node
+  - content:
       body: |
-        OSS Guard runs [license_finder](https://github.com/pivotal/LicenseFinder) on every pull request and checks that dependencies are compatible with your project's license.
+        OSS Guard helps you keep dependency licenses aligned with your project's license. It scans your repo on pull requests and gives you a dashboard view of what's on `main`.
 
-        <details open>
-        <summary>Getting started</summary>
+        <details>
+        <summary>Set up the repository</summary>
 
         1. Add a `LICENSE` file (or set `license` in `package.json` / `pyproject.toml`) in your repository.
         2. Connect GitHub on the canvas nodes and select the repository on **On Pull Request**.
-        3. Run **Setup** above with `owner/repo` to scan `main` and populate the dashboard.
-        4. Optionally add a `GITHUB_TOKEN` secret on **Run license check** for private repositories.
+        3. Run **Setup** with `owner/repo` to save the repository.
+        4. Run **Scan main** to scan `main` and refresh the dashboard.
+        5. Optional: add a `GITHUB_TOKEN` secret on **Run setup scan** and **Run license check** for private repositories.
 
         </details>
 
         <details>
-        <summary>Approving extra licenses</summary>
+        <summary>Add exceptions</summary>
 
-        Use **Add permitted license** to allow additional dependency licenses beyond the defaults for your project license. You can also add exceptions in your repository's `config/dependency_decisions.yml`.
+        Add approved dependency exceptions in your repository's `osv-scanner.toml`.
 
         </details>
-      title: OSS Guard
-  - id: kpi-total-dependencies
-    type: number
-    content:
-      dataSource:
-        kind: memory
-        namespace: ossGuardScanSummary
-      render:
-        aggregation: sum
-        field: total_dependencies
-        kind: number
-        label: dependencies
-      title: Total dependencies
-  - id: kpi-unique-licenses
-    type: number
-    content:
-      dataSource:
-        kind: memory
-        namespace: ossGuardScanSummary
-      render:
-        aggregation: sum
-        field: unique_licenses
-        kind: number
-        label: license types
-      title: Unique licenses
-  - id: kpi-unapproved
-    type: number
-    content:
-      dataSource:
-        kind: memory
-        namespace: ossGuardScanSummary
-      render:
-        aggregation: sum
-        field: unapproved_dependencies
-        kind: number
-        label: dependencies
-      title: Unapproved
-  - id: chart-licenses
-    type: chart
-    content:
-      dataSource:
-        kind: memory
-        namespace: ossGuardLicenseStats
-      render:
-        kind: chart
-        legend: hide
-        series:
-        - field: dependency_count
-          label: Dependencies
-        type: bar
-        xField: license
-      title: Licenses in use
-  - id: license-stats-table
-    type: table
-    content:
-      dataSource:
-        kind: memory
-        namespace: ossGuardLicenseStats
-      render:
-        columns:
-        - field: license
-          label: License
-        - field: dependency_count
-          format: number
-          label: Dependencies
-        - field: approved
-          format: badge
-          label: Approved
-        - field: last_checked_at
-          format: relative
-          label: Last seen
-        kind: table
-        rowStyles:
-        - field: approved
-          op: eq
-          tone: red
-          value: 'false'
-        - field: approved
-          op: eq
-          tone: green
-          value: 'true'
-        sort:
-          field: dependency_count
-          order: desc
-      title: Dependency licenses
-  - id: scan-summary-table
-    type: table
-    content:
+      title: Quick Start
+    id: readme
+    type: markdown
+  - content:
       dataSource:
         kind: memory
         namespace: ossGuardScanSummary
@@ -135,122 +99,64 @@ spec:
         - field: total_dependencies
           format: number
           label: Dependencies
-        - field: unique_licenses
-          format: number
-          label: License types
         - field: unapproved_dependencies
           format: number
           label: Unapproved
-        - field: last_pr_number
-          label: Last PR
         - field: last_checked_at
           format: relative
-          label: Last check
+          label: Last scan
         kind: table
         sort:
           field: last_checked_at
           order: desc
-      title: Latest scans
-  - id: licenses-table
+      title: Latest scan
+    id: scan-summary-table
     type: table
-    content:
+  - content:
       dataSource:
         kind: memory
-        namespace: ossGuardLicenses
+        namespace: ossGuardUnapprovedDeps
+      render:
+        columns:
+        - field: name
+          label: Package
+        - field: version
+          label: Version
+        - field: package_manager
+          label: Ecosystem
+        - field: license
+          label: License
+        kind: table
+        sort:
+          field: name
+          order: asc
+      title: Unapproved dependencies
+    id: unapproved-deps-table
+    type: table
+  - content:
+      dataSource:
+        kind: memory
+        namespace: ossGuardLicenseStats
       render:
         columns:
         - field: license
           label: License
-        - field: description
-          label: Description
+        - field: dependency_count
+          format: number
+          label: Dependencies
         kind: table
-        rowActions:
-        - confirm: Remove {{ license }} from additional permitted licenses?
-          icon: trash
-          kind: trigger
-          label: Delete
-          node: delete-license
-          payload:
-            license: "{{ license }}"
-          variant: danger
+        rowStyles:
+        - field: approved
+          op: eq
+          tone: green
+          value: 'true'
+        - field: approved
+          op: eq
+          tone: red
+          value: 'false'
         sort:
-          field: license
-          order: asc
-      title: Additional permitted dependency licenses
-  - id: add-license-panel
-    type: node
-    content:
-      node: add-license
-      showRun: true
-      title: Add permitted license
-  layout:
-  - i: setup-panel
-    x: 0
-    "y": 0
-    w: 4
-    h: 3
-    minW: 2
-    minH: 2
-  - i: readme
-    x: 0
-    "y": 3
-    w: 4
-    h: 6
-    minW: 2
-    minH: 2
-  - i: kpi-total-dependencies
-    x: 0
-    "y": 9
-    w: 4
-    h: 2
-    minW: 2
-    minH: 2
-  - i: kpi-unique-licenses
-    x: 0
-    "y": 11
-    w: 4
-    h: 2
-    minW: 2
-    minH: 2
-  - i: kpi-unapproved
-    x: 0
-    "y": 13
-    w: 4
-    h: 2
-    minW: 2
-    minH: 2
-  - i: add-license-panel
-    x: 0
-    "y": 15
-    w: 4
-    h: 3
-    minW: 2
-    minH: 2
-  - i: chart-licenses
-    x: 4
-    "y": 0
-    w: 8
-    h: 18
-    minW: 4
-    minH: 3
-  - i: license-stats-table
-    x: 0
-    "y": 18
-    w: 7
-    h: 7
-    minW: 4
-    minH: 4
-  - i: scan-summary-table
-    x: 7
-    "y": 18
-    w: 5
-    h: 7
-    minW: 4
-    minH: 4
-  - i: licenses-table
-    x: 0
-    "y": 25
-    w: 12
-    h: 5
-    minW: 4
-    minH: 3
+          field: dependency_count
+          order: desc
+      title: Licenses in use
+    id: license-stats-table
+    type: table

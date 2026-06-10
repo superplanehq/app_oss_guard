@@ -35,8 +35,11 @@ spec:
     sourceId: if-should-comment
     targetId: comment-failure
   - channel: default
-    sourceId: start-setup-f032ff
+    sourceId: trigger-setup
     targetId: record-setup-config
+  - channel: default
+    sourceId: trigger-schedule-daily
+    targetId: read-config
   - channel: default
     sourceId: trigger-scan-main
     targetId: read-config
@@ -68,56 +71,25 @@ spec:
     sourceId: record-unapproved-deps
     targetId: record-setup-summary
   nodes:
-  - component: readMemory
+  - component: github.onPullRequest
     configuration:
-      emitMode: allAtOnce
-      matchList:
-      - name: configured
-        value: 'true'
-      namespace: ossGuardConfig
-      resultMode: latest
-    id: read-config
-    name: Read config
-    position:
-      x: 760
-      "y": 820
-    type: TYPE_ACTION
-  - component: start
-    configuration:
-      templates:
-      - name: run
-        payload: {}
-    id: trigger-scan-main
-    name: Scan main
+      actions:
+      - opened
+      - synchronize
+      - reopened
+      repository: superplane
+    id: trigger-on-pull-request
+    integration:
+      id: c1da9632-de2c-4f04-bcfa-ce9bea0d1219
+    metadata:
+      repository:
+        id: 979560403.0
+        name: superplane
+        url: https://github.com/superplanehq/superplane
+    name: On Pull Request
     position:
       x: 120
-      "y": 820
-    type: TYPE_TRIGGER
-  - component: if
-    configuration:
-      expression: '{{ $["Run license check"].data.result.valid == true }}'
-    id: if-licenses-valid
-    name: Licenses valid?
-    position:
-      x: 2040
       "y": 180
-    type: TYPE_ACTION
-  - component: start
-    configuration:
-      templates:
-      - name: run
-        parameters:
-        - name: repository
-          placeholder: e.g. superplanehq/superplane
-          title: Repository
-          type: string
-        payload:
-          repository: "{{ parameters.repository }}"
-    id: start-setup-f032ff
-    name: Setup
-    position:
-      x: 120
-      "y": 1280
     type: TYPE_TRIGGER
   - component: github.createIssueComment
     configuration:
@@ -143,7 +115,7 @@ spec:
       id: 879eee5b-a973-4822-b4f2-0dc1df8b9680
     name: Comment on PR
     position:
-      x: 3960
+      x: 7160
       "y": 180
     type: TYPE_ACTION
   - component: github.publishCommitStatus
@@ -158,7 +130,32 @@ spec:
       id: 879eee5b-a973-4822-b4f2-0dc1df8b9680
     name: Publish failure status
     position:
-      x: 2680
+      x: 5880
+    type: TYPE_ACTION
+  - component: if
+    configuration:
+      expression: '{{ root().data.action == "opened" || root().data.action == "synchronize"
+        || root().data.action == "reopened" }}'
+    id: if-should-comment
+    name: Should comment?
+    position:
+      x: 6520
+      "y": 180
+    type: TYPE_ACTION
+  - component: github.publishCommitStatus
+    configuration:
+      context: OSS Guard
+      description: All dependencies use permitted open-source licenses.
+      repository: "{{ root().data.repository.name }}"
+      sha: "{{ root().data.pull_request.head.sha }}"
+      state: success
+    id: publish-success-status
+    integration:
+      id: 879eee5b-a973-4822-b4f2-0dc1df8b9680
+    name: Publish success status
+    position:
+      x: 5880
+      "y": 360
     type: TYPE_ACTION
   - component: runnerPython
     configuration:
@@ -724,46 +721,6 @@ spec:
     name: Run license check
     position:
       x: 1400
-      "y": 180
-    type: TYPE_ACTION
-  - component: upsertMemory
-    configuration:
-      itemVariable: stat
-      iterateList: true
-      listSource: "$['Run setup scan'].data.result.license_stats"
-      matchList:
-      - name: repository
-        value: '{{ $["Run setup scan"].data.result.repository }}'
-      - name: license
-        value: stat.license
-      namespace: ossGuardLicenseStats
-      valueList:
-      - name: repository
-        value: "$['Run setup scan'].data.result.repository"
-      - name: license
-        value: stat.license
-      - name: dependency_count
-        value: stat.dependency_count
-      - name: approved
-        value: stat.approved
-      - name: project_license
-        value: "$['Run setup scan'].data.result.project_license"
-      - name: last_checked_at
-        value: "{{ int(now().Unix()) }}"
-    id: record-setup-stats
-    name: Record setup stats
-    position:
-      x: 3320
-      "y": 820
-    type: TYPE_ACTION
-  - component: if
-    configuration:
-      expression: '{{ root().data.action == "opened" || root().data.action == "synchronize"
-        || root().data.action == "reopened" }}'
-    id: if-should-comment
-    name: Should comment?
-    position:
-      x: 3320
       "y": 180
     type: TYPE_ACTION
   - component: runnerPython
@@ -1335,9 +1292,10 @@ spec:
     id: run-setup-scan
     name: Run setup scan
     position:
-      x: 1400
-      "y": 820
+      x: 760
+      "y": 400
     type: TYPE_ACTION
+
   - component: deleteMemory
     configuration:
       matchList:
@@ -1347,8 +1305,47 @@ spec:
     id: clear-setup-stats
     name: Clear setup stats
     position:
+      x: 2040
+      "y": 310
+    type: TYPE_ACTION
+  - component: upsertMemory
+    configuration:
+      itemVariable: stat
+      iterateList: true
+      listSource: "$['Run setup scan'].data.result.license_stats"
+      matchList:
+      - name: repository
+        value: '{{ $["Run setup scan"].data.result.repository }}'
+      - name: license
+        value: stat.license
+      namespace: ossGuardLicenseStats
+      valueList:
+      - name: repository
+        value: "$['Run setup scan'].data.result.repository"
+      - name: license
+        value: stat.license
+      - name: dependency_count
+        value: stat.dependency_count
+      - name: approved
+        value: stat.approved
+      - name: project_license
+        value: "$['Run setup scan'].data.result.project_license"
+      - name: last_checked_at
+        value: "{{ int(now().Unix()) }}"
+    id: record-setup-stats
+    name: Record setup stats
+    position:
       x: 2680
-      "y": 820
+      "y": 310
+    type: TYPE_ACTION
+  - component: if
+    configuration:
+      expression: '{{ $["Run setup scan"].data.result.project_license != "" }}'
+    id: if-setup-has-stats
+    name: Has setup stats?
+    position:
+      x: 1400
+      "y": 400
     type: TYPE_ACTION
   - component: upsertMemory
     configuration:
@@ -1366,118 +1363,21 @@ spec:
       - name: unique_licenses
         value: '{{ $["Run setup scan"].data.result.summary.unique_licenses }}'
       - name: unapproved_dependencies
-        value: '{{ $["Run setup scan"].data.result.summary.unapproved_dependencies
-          }}'
+        value: '{{ $["Run setup scan"].data.result.summary.unapproved_dependencies }}'
       - name: last_checked_at
         value: "{{ int(now().Unix()) }}"
     id: record-setup-summary
     name: Record setup summary
     position:
-      x: 5240
-      "y": 820
-    type: TYPE_ACTION
-  - component: deleteMemory
-    configuration:
-      matchList:
-      - name: repository
-        value: '{{ $["Run setup scan"].data.result.repository }}'
-      namespace: ossGuardUnapprovedDeps
-    id: clear-unapproved-deps
-    name: Clear unapproved deps
-    position:
-      x: 3960
-      "y": 820
-    type: TYPE_ACTION
-  - component: upsertMemory
-    configuration:
-      itemVariable: dep
-      iterateList: true
-      listSource: "$['Run setup scan'].data.result.unapproved_dependencies_list"
-      matchList:
-      - name: repository
-        value: '{{ $["Run setup scan"].data.result.repository }}'
-      - name: name
-        value: dep.name
-      - name: version
-        value: dep.version
-      namespace: ossGuardUnapprovedDeps
-      valueList:
-      - name: repository
-        value: "$['Run setup scan'].data.result.repository"
-      - name: name
-        value: dep.name
-      - name: version
-        value: dep.version
-      - name: package_manager
-        value: dep.package_manager
-      - name: license
-        value: dep.license
-    id: record-unapproved-deps
-    name: Record unapproved deps
-    position:
-      x: 4600
-      "y": 820
-    type: TYPE_ACTION
-  - component: if
-    configuration:
-      expression: '{{ root().data.action == "opened" || root().data.action == "synchronize"
-        || root().data.action == "reopened" }}'
-    id: if-should-check
-    name: Should check?
-    position:
-      x: 760
-      "y": 180
-    type: TYPE_ACTION
-  - component: github.onPullRequest
-    configuration:
-      actions:
-      - opened
-      - synchronize
-      - reopened
-      repository: superplane
-    id: trigger-on-pull-request
-    integration:
-      id: c1da9632-de2c-4f04-bcfa-ce9bea0d1219
-    metadata:
-      repository:
-        id: 979560403.0
-        name: superplane
-        url: https://github.com/superplanehq/superplane
-    name: On Pull Request
-    position:
-      x: 120
-      "y": 180
-    type: TYPE_TRIGGER
-  - component: github.publishCommitStatus
-    configuration:
-      context: OSS Guard
-      description: All dependencies use permitted open-source licenses.
-      repository: "{{ root().data.repository.name }}"
-      sha: "{{ root().data.pull_request.head.sha }}"
-      state: success
-    id: publish-success-status
-    integration:
-      id: 879eee5b-a973-4822-b4f2-0dc1df8b9680
-    name: Publish success status
-    position:
-      x: 2680
-      "y": 360
-    type: TYPE_ACTION
-  - component: if
-    configuration:
-      expression: '{{ $["Run setup scan"].data.result.project_license != "" }}'
-    id: if-setup-has-stats
-    name: Has setup stats?
-    position:
-      x: 2040
-      "y": 820
+      x: 3320
+      "y": 310
     type: TYPE_ACTION
   - component: upsertMemory
     configuration:
       namespace: ossGuardConfig
       valueList:
       - name: repository
-        value: "{{ root().data.repository }}"
+        value: '{{ root().data.repository }}'
       - name: branch
         value: main
       - name: configured
@@ -1488,5 +1388,102 @@ spec:
     name: Record setup config
     position:
       x: 760
-      "y": 1280
+      "y": 400
     type: TYPE_ACTION
+  - component: start
+    configuration:
+      templates:
+      - name: run
+        payload:
+          license: '{{ parameters.license }}'
+          name: '{{ parameters.name }}'
+          package_manager: '{{ parameters.package_manager }}'
+          repository: '{{ parameters.repository }}'
+          version: '{{ parameters.version }}'
+    id: trigger-approve-dependency
+    name: approve-dependency
+    position:
+      x: 120
+      "y": 760
+    type: TYPE_TRIGGER
+  - component: upsertMemory
+    configuration:
+      matchList:
+      - name: repository
+        value: '{{ $["approve-dependency"].data.repository }}'
+      - name: name
+        value: '{{ $["approve-dependency"].data.name }}'
+      - name: version
+        value: '{{ $["approve-dependency"].data.version }}'
+      namespace: ossGuardApprovedDeps
+      valueList:
+      - name: repository
+        value: '{{ $["approve-dependency"].data.repository }}'
+      - name: name
+        value: '{{ $["approve-dependency"].data.name }}'
+      - name: version
+        value: '{{ $["approve-dependency"].data.version }}'
+      - name: package_manager
+        value: '{{ $["approve-dependency"].data.package_manager }}'
+      - name: license
+        value: '{{ $["approve-dependency"].data.license }}'
+      - name: approved_at
+        value: "{{ int(now().Unix()) }}"
+    id: record-approved-dep
+    name: Record approved dep
+    position:
+      x: 760
+      "y": 760
+    type: TYPE_ACTION
+  - component: deleteMemory
+    configuration:
+      matchList:
+      - name: repository
+        value: '{{ $["approve-dependency"].data.repository }}'
+      - name: name
+        value: '{{ $["approve-dependency"].data.name }}'
+      - name: version
+        value: '{{ $["approve-dependency"].data.version }}'
+      namespace: ossGuardUnapprovedDeps
+    id: remove-unapproved-dep
+    name: Remove unapproved dep
+    position:
+      x: 1400
+      "y": 760
+    type: TYPE_ACTION
+  - component: readMemory
+    configuration:
+      emitMode: allAtOnce
+      matchList:
+      - name: repository
+        value: '{{ $["Read config"].data.values[0].repository }}'
+      namespace: ossGuardApprovedDeps
+      resultMode: all
+    id: read-approved-deps
+    name: Read approved deps
+    position:
+      x: 1400
+      "y": 520
+    type: TYPE_ACTION
+  - component: readMemory
+    configuration:
+      emitMode: allAtOnce
+      matchList:
+      - name: repository
+        value: '{{ root().data.repository.full_name }}'
+      namespace: ossGuardApprovedDeps
+      resultMode: all
+    id: read-pr-approved-deps
+    name: Read PR approved deps
+    position:
+      x: 1400
+      "y": 180
+    type: TYPE_ACTION
+
+  - component: readMemory
+    configuration:
+      emitMode: allAtOnce
+      matchList:
+      - name: configured
+        value: 'true'
+      namespace: ossGuardConfig
