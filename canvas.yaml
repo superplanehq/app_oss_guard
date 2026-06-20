@@ -4,14 +4,10 @@ kind: Canvas
 metadata:
   description: Check pull request dependencies for open-source license compatibility
     using osv-scanner.
-  id: 25414c17-e388-4bed-b1ac-e9775823177a
   isTemplate: false
-  name: app-oss-guard
+  name: OSS Guard
   organizationId: 3ee1aa47-3a60-4c1f-b645-0b9859ab91f8
 spec:
-  changeManagement:
-    approvals:
-    - type: TYPE_ANYONE
   edges:
   - channel: default
     sourceId: trigger-on-pull-request
@@ -1556,7 +1552,7 @@ spec:
       - opened
       - synchronize
       - reopened
-      repository: superplane
+      repository: "{{ root().data.repository.name }}"
     id: trigger-on-pull-request
     integration:
       id: c1da9632-de2c-4f04-bcfa-ce9bea0d1219

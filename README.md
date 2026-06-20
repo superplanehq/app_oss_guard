@@ -1,6 +1,6 @@
 # OSS Guard
 
-[![Launch in SuperPlane](http://superplane.com/badges/launch-in-superplane.svg)](https://app.superplane.com/install?repo=github.com/superplanehq/app_oss_guard)
+[![Launch in SuperPlane](https://superplane.com/badges/launch-in-superplane.svg)](https://app.superplane.com/install?repo=github.com/superplanehq/app_oss_guard)
 
 Check **open-source license compatibility** on every pull request — run [osv-scanner](https://google.github.io/osv-scanner/) against the PR head, publish commit statuses, comment on failures, and track dependency license statistics in the console.
 
