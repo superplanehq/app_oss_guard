@@ -4,9 +4,7 @@ kind: Canvas
 metadata:
   description: Check pull request dependencies for open-source license compatibility
     using osv-scanner.
-  isTemplate: false
   name: OSS Guard
-  organizationId: 3ee1aa47-3a60-4c1f-b645-0b9859ab91f8
 spec:
   edges:
   - channel: default
